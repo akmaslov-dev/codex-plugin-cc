@@ -70,7 +70,8 @@ export function spawnBrokerProcess({ scriptPath, cwd, endpoint, pidFile, logFile
 }
 
 function resolveBrokerStateFile(cwd) {
-  return path.join(resolveStateDir(cwd), BROKER_STATE_FILE);
+  const profile = process.env.CODEX_COMPANION_PROFILE;
+  return path.join(resolveStateDir(cwd), profile ? `broker-${profile}.json` : BROKER_STATE_FILE);
 }
 
 export function loadBrokerSession(cwd) {

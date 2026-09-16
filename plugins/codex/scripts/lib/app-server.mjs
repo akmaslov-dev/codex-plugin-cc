@@ -7,6 +7,7 @@
  * @typedef {import("./app-server-protocol").CodexAppServerClientOptions} CodexAppServerClientOptions
  * @typedef {import("./app-server-protocol").InitializeCapabilities} InitializeCapabilities
  */
+import { profileConfigArgs } from "./profile-config.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import process from "node:process";
@@ -187,7 +188,7 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
   }
 
   async initialize() {
-    this.proc = spawn("codex", ["app-server"], {
+    this.proc = spawn("codex", [...profileConfigArgs(this.options.env ?? process.env), "app-server"], {
       cwd: this.cwd,
       env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -336,7 +337,9 @@ export class CodexAppServerClient {
   static async connect(cwd, options = {}) {
     let brokerEndpoint = null;
     if (!options.disableBroker) {
-      brokerEndpoint = options.brokerEndpoint ?? options.env?.[BROKER_ENDPOINT_ENV] ?? process.env[BROKER_ENDPOINT_ENV] ?? null;
+      brokerEndpoint = (options.env ?? process.env).CODEX_COMPANION_PROFILE
+        ? null
+        : options.brokerEndpoint ?? options.env?.[BROKER_ENDPOINT_ENV] ?? process.env[BROKER_ENDPOINT_ENV] ?? null;
       if (!brokerEndpoint && options.reuseExistingBroker) {
         brokerEndpoint = loadBrokerSession(cwd)?.endpoint ?? null;
       }

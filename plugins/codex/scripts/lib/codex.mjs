@@ -106,7 +106,8 @@ function looksLikeVerificationCommand(command) {
 
 function buildTaskThreadName(prompt) {
   const excerpt = shorten(prompt, 56);
-  return excerpt ? `${TASK_THREAD_PREFIX}: ${excerpt}` : TASK_THREAD_PREFIX;
+  const prefix = process.env.CODEX_COMPANION_PROFILE ? `${TASK_THREAD_PREFIX} [${process.env.CODEX_COMPANION_PROFILE}]` : TASK_THREAD_PREFIX;
+  return excerpt ? `${prefix}: ${excerpt}` : prefix;
 }
 
 function extractThreadId(message) {
@@ -1175,7 +1176,10 @@ export async function findLatestTaskThread(cwd) {
     });
 
     return (
-      response.data.find((thread) => typeof thread.name === "string" && thread.name.startsWith(TASK_THREAD_PREFIX)) ??
+      response.data.find((thread) => typeof thread.name === "string" && thread.name.startsWith(TASK_THREAD_PREFIX) &&
+        (process.env.CODEX_COMPANION_PROFILE
+          ? thread.name.startsWith(`${TASK_THREAD_PREFIX} [${process.env.CODEX_COMPANION_PROFILE}]`)
+          : !thread.name.startsWith(`${TASK_THREAD_PREFIX} [`))) ??
       null
     );
   });
