@@ -13,24 +13,43 @@ they already have.
 - `/codex:adversarial-review` for a steerable challenge review
 - `/codex:rescue`, `/codex:transfer`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work, hand off sessions, and manage background jobs
 
+This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) with named Codex profiles. It also shuts down idle app-server processes and cleans up processes for each profile.
+
 ## Requirements
 
 - **ChatGPT subscription (incl. Free) or OpenAI API key.**
   - Usage will contribute to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
 - **Node.js 18.18 or later**
+- **Python 3.11 or later** when using `--profile` (standard-library TOML parser)
 
 ## Install
 
-Add the marketplace in Claude Code:
+If you already have the official plugin, uninstall it before loading this fork. Both use the `/codex:*` command names:
+
+```text
+/plugin uninstall codex@openai-codex
+```
+
+To use a local checkout, clone the repo and pass the plugin directory to Claude:
 
 ```bash
-/plugin marketplace add openai/codex-plugin-cc
+git clone https://github.com/akmaslov-dev/codex-plugin-cc.git ~/codex-plugin-cc
+claude --plugin-dir ~/codex-plugin-cc/plugins/codex
+```
+
+Update that checkout with `git -C ~/codex-plugin-cc pull --ff-only`, then run `/reload-plugins`.
+See [Claude Code's local plugin instructions](https://code.claude.com/docs/en/plugins#test-your-plugin).
+
+To install through Claude's plugin manager, add this repository:
+
+```bash
+/plugin marketplace add akmaslov-dev/codex-plugin-cc
 ```
 
 Install the plugin:
 
 ```bash
-/plugin install codex@openai-codex
+/plugin install codex@akmaslov-codex
 ```
 
 Reload plugins:
@@ -318,3 +337,23 @@ Yes. If you already use Codex, the plugin picks up the same [configuration](#com
 Yes. Because the plugin uses your local Codex CLI, your existing sign-in method and config still apply.
 
 If you need to point the built-in OpenAI provider at a different endpoint, set `openai_base_url` in your [Codex config](https://developers.openai.com/codex/config-advanced/#config-and-state-locations).
+
+## Codex profiles
+
+Use `--profile <name>` or `-p <name>` with any command. Rescue passes the profile to its subagent too.
+
+```text
+/codex:setup --profile custom
+/codex:review --profile custom --wait
+/codex:adversarial-review --profile custom --wait check error handling
+/codex:rescue --profile custom --fresh investigate the failing tests
+/codex:transfer --profile custom
+```
+
+Put profile settings in `~/.codex/<name>.config.toml`, or under `CODEX_HOME` if you set it. For example, `--profile custom` reads `~/.codex/custom.config.toml`. The runtime applies these settings over your base config and keeps the same MCP servers and skills. Commands without the flag use your base config. Model and effort flags override the profile defaults.
+
+Each profile has its own broker. Jobs keep their profile when they run in the background or receive a cancellation request. Rescue only offers to resume jobs from the selected profile. An explicit profile also limits which jobs status, result and cancel can select. Updates from this fork keep profile support.
+
+Codex CLI 0.154.0 rejects `--profile` for `app-server`, so the plugin reads the profile with Python 3.11+ (`tomllib`) and passes its settings as `-c` overrides. To check this with your installed CLI, run `node tests/real-profile-smoke.mjs custom`. The check reads the effective config without starting a model turn or printing credentials.
+
+A broker exits after 60 seconds without a connected client. It also exits if its child app-server dies. When a Claude session ends, the hook cleans up brokers for every profile and leaves other sessions' active jobs running. Updating the plugin files leaves existing processes alone; those processes use the old code until they exit.

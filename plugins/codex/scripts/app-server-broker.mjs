@@ -70,6 +70,23 @@ async function main() {
   let activeStreamSocket = null;
   let activeStreamThreadIds = null;
   const sockets = new Set();
+  const configuredIdleMs = Number(process.env.CODEX_COMPANION_BROKER_IDLE_MS);
+  const idleTimeoutMs = Number.isFinite(configuredIdleMs) && configuredIdleMs > 0 ? configuredIdleMs : 60000;
+  let idleTimer = null;
+  let shuttingDown = false;
+
+  function scheduleIdleShutdown() {
+    clearTimeout(idleTimer);
+    if (!shuttingDown && sockets.size === 0) idleTimer = setTimeout(() => stop(0), idleTimeoutMs);
+  }
+
+  async function stop(code) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    clearTimeout(idleTimer);
+    await shutdown(server);
+    process.exit(code);
+  }
 
   function clearSocketOwnership(socket) {
     if (activeRequestSocket === socket) {
@@ -116,6 +133,7 @@ async function main() {
   appClient.setNotificationHandler(routeNotification);
 
   const server = net.createServer((socket) => {
+    clearTimeout(idleTimer);
     sockets.add(socket);
     socket.setEncoding("utf8");
     let buffer = "";
@@ -159,8 +177,7 @@ async function main() {
 
         if (message.id !== undefined && message.method === "broker/shutdown") {
           send(socket, { id: message.id, result: {} });
-          await shutdown(server);
-          process.exit(0);
+          await stop(0);
         }
 
         if (message.id === undefined) {
@@ -225,25 +242,26 @@ async function main() {
     socket.on("close", () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
+      scheduleIdleShutdown();
     });
 
     socket.on("error", () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
+      scheduleIdleShutdown();
     });
   });
 
   process.on("SIGTERM", async () => {
-    await shutdown(server);
-    process.exit(0);
+    await stop(0);
   });
 
   process.on("SIGINT", async () => {
-    await shutdown(server);
-    process.exit(0);
+    await stop(0);
   });
 
-  server.listen(listenTarget.path);
+  appClient.exitPromise.then(() => stop(1));
+  server.listen(listenTarget.path, scheduleIdleShutdown);
 }
 
 main().catch((error) => {

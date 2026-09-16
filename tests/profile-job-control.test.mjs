@@ -1,0 +1,20 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {makeTempDir} from "./helpers.mjs";
+import {saveState} from "../plugins/codex/scripts/lib/state.mjs";
+import {resolveCancelableJob,resolveResultJob,buildStatusSnapshot,buildSingleJobSnapshot} from "../plugins/codex/scripts/lib/job-control.mjs";
+test('explicit profile never selects another profiles job for status result or cancel',t=>{
+ const previous=process.env.CODEX_COMPANION_PROFILE;
+ t.after(()=>{if(previous===undefined)delete process.env.CODEX_COMPANION_PROFILE;else process.env.CODEX_COMPANION_PROFILE=previous});
+ const cwd=makeTempDir();
+ saveState(cwd,{version:1,config:{},jobs:[{id:'task-bar-active',profile:'bar',status:'running'},{id:'task-bar-done',profile:'bar',status:'completed'}]});
+ process.env.CODEX_COMPANION_PROFILE='foo';
+ assert.throws(()=>resolveCancelableJob(cwd,''),/No active/);
+ assert.throws(()=>resolveCancelableJob(cwd,'task-bar-active'),/No job/);
+ assert.throws(()=>resolveResultJob(cwd,''),/No finished/);
+ assert.throws(()=>buildSingleJobSnapshot(cwd,'task-bar-active'),/No job/);
+ assert.equal(buildStatusSnapshot(cwd).running.length,0);
+ delete process.env.CODEX_COMPANION_PROFILE;
+ assert.equal(resolveCancelableJob(cwd,'').job.id,'task-bar-active');
+ assert.equal(resolveResultJob(cwd,'').job.id,'task-bar-done');
+});

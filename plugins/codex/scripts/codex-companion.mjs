@@ -76,6 +76,7 @@ function printUsage() {
   console.log(
     [
       "Usage:",
+      "  All commands accept --profile <name> (alias -p); omitted uses the base Codex config.",
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
@@ -139,13 +140,23 @@ function normalizeArgv(argv) {
 }
 
 function parseCommandInput(argv, config = {}) {
-  return parseArgs(normalizeArgv(argv), {
+  const parsed = parseArgs(normalizeArgv(argv), {
     ...config,
+    valueOptions: [...(config.valueOptions ?? []), "profile"],
     aliasMap: {
       C: "cwd",
+      p: "profile",
       ...(config.aliasMap ?? {})
     }
   });
+  if (parsed.options.profile !== undefined) {
+    const profile = parsed.options.profile;
+    if (!/^[A-Za-z0-9_-]+$/.test(profile)) {
+      throw new Error("Invalid --profile: use letters, numbers, hyphens or underscores.");
+    }
+    process.env.CODEX_COMPANION_PROFILE = profile;
+  }
+  return parsed;
 }
 
 function resolveCommandCwd(options = {}) {
@@ -296,6 +307,7 @@ function getCurrentClaudeSessionId() {
 }
 
 function filterJobsForCurrentClaudeSession(jobs) {
+  jobs = jobs.filter(job => (job.profile ?? null) === (process.env.CODEX_COMPANION_PROFILE ?? null));
   const sessionId = getCurrentClaudeSessionId();
   if (!sessionId) {
     return jobs;
@@ -573,7 +585,8 @@ function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summ
     workspaceRoot,
     jobClass,
     summary,
-    write
+    write,
+    profile: process.env.CODEX_COMPANION_PROFILE ?? null
   });
 }
 
@@ -629,7 +642,7 @@ async function executeTransfer(cwd, options = {}) {
   const result = await importExternalAgentSession(cwd, { sourcePath });
   const payload = {
     threadId: result.threadId,
-    resumeCommand: `codex resume ${result.threadId}`,
+    resumeCommand: `codex${process.env.CODEX_COMPANION_PROFILE ? ` --profile ${process.env.CODEX_COMPANION_PROFILE}` : ""} resume ${result.threadId}`,
     sourcePath,
     sessionId: path.basename(sourcePath, ".jsonl")
   };
@@ -851,6 +864,8 @@ async function handleTaskWorker(argv) {
     throw new Error(`No stored job found for ${options["job-id"]}.`);
   }
 
+  if (storedJob.profile) process.env.CODEX_COMPANION_PROFILE = storedJob.profile;
+  else delete process.env.CODEX_COMPANION_PROFILE;
   const request = storedJob.request;
   if (!request || typeof request !== "object") {
     throw new Error(`Stored job ${options["job-id"]} is missing its task request payload.`);
@@ -973,6 +988,8 @@ async function handleCancel(argv) {
   const threadId = existing.threadId ?? job.threadId ?? null;
   const turnId = existing.turnId ?? job.turnId ?? null;
 
+  if (existing.profile ?? job.profile) process.env.CODEX_COMPANION_PROFILE = existing.profile ?? job.profile;
+  else delete process.env.CODEX_COMPANION_PROFILE;
   const interrupt = await interruptAppServerTurn(cwd, { threadId, turnId });
   if (interrupt.attempted) {
     appendLogLine(

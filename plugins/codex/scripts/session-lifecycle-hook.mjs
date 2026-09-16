@@ -6,14 +6,12 @@ import process from "node:process";
 import { terminateProcessTree } from "./lib/process.mjs";
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import {
-  clearBrokerSession,
   LOG_FILE_ENV,
-  loadBrokerSession,
   PID_FILE_ENV,
   sendBrokerShutdown,
   teardownBrokerSession
 } from "./lib/broker-lifecycle.mjs";
-import { loadState, resolveStateFile, saveState } from "./lib/state.mjs";
+import { loadState, resolveStateDir, resolveStateFile, saveState } from "./lib/state.mjs";
 import { TRANSCRIPT_PATH_ENV } from "./lib/claude-session-transfer.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
@@ -82,35 +80,36 @@ function handleSessionStart(input) {
 
 async function handleSessionEnd(input) {
   const cwd = input.cwd || process.cwd();
-  const brokerSession =
-    loadBrokerSession(cwd) ??
-    (process.env[BROKER_ENDPOINT_ENV]
-      ? {
-          endpoint: process.env[BROKER_ENDPOINT_ENV],
-          pidFile: process.env[PID_FILE_ENV] ?? null,
-          logFile: process.env[LOG_FILE_ENV] ?? null
-        }
-      : null);
-  const brokerEndpoint = brokerSession?.endpoint ?? null;
-  const pidFile = brokerSession?.pidFile ?? null;
-  const logFile = brokerSession?.logFile ?? null;
-  const sessionDir = brokerSession?.sessionDir ?? null;
-  const pid = brokerSession?.pid ?? null;
-
-  if (brokerEndpoint) {
-    await sendBrokerShutdown(brokerEndpoint);
-  }
-
   cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
-  teardownBrokerSession({
-    endpoint: brokerEndpoint,
-    pidFile,
-    logFile,
-    sessionDir,
-    pid,
-    killProcess: terminateProcessTree
-  });
-  clearBrokerSession(cwd);
+  const stateDir = resolveStateDir(cwd);
+  const jobs = loadState(cwd).jobs;
+  const files = fs.existsSync(stateDir)
+    ? fs.readdirSync(stateDir).filter(name => /^broker(?:-[A-Za-z0-9_-]+)?\.json$/.test(name))
+    : [];
+  for (const name of files) {
+    const profile = name === "broker.json" ? null : name.slice(7, -5);
+    if (jobs.some(job => (job.profile ?? null) === profile && ["queued", "running"].includes(job.status))) continue;
+    const file = `${stateDir}/${name}`;
+    const session = JSON.parse(fs.readFileSync(file, "utf8"));
+    await sendBrokerShutdown(session.endpoint);
+    let ownsPid = false;
+    try {
+      ownsPid = Boolean(session.pidFile) && fs.readFileSync(session.pidFile, "utf8").trim() === String(session.pid);
+    } catch {
+      // An exited broker has no pid file; its saved PID may now belong to another process.
+    }
+    teardownBrokerSession({...session, killProcess: ownsPid ? terminateProcessTree : null});
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  }
+  if (!files.length && process.env[BROKER_ENDPOINT_ENV] && !jobs.some(job => ["queued", "running"].includes(job.status))) {
+    await sendBrokerShutdown(process.env[BROKER_ENDPOINT_ENV]);
+    teardownBrokerSession({
+      endpoint: process.env[BROKER_ENDPOINT_ENV],
+      pidFile: process.env[PID_FILE_ENV] ?? null,
+      logFile: process.env[LOG_FILE_ENV] ?? null,
+      killProcess: terminateProcessTree
+    });
+  }
 }
 
 async function main() {
